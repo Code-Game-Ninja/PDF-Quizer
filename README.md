@@ -149,8 +149,8 @@ If you encounter any issues or have questions, please open an issue on GitHub.
 
 ## Author ✍️
 
-Created with ❤️ using Next.js and AI
-
+Created with ❤️ using Next.js and Open Router (API KEY)
+Made by - Chirag Mishra
 ---
 
 **Note**: This application uses AI to extract questions. Accuracy depends on document formatting and clarity. Always review extracted questions for accuracy.
