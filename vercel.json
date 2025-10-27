@@ -1,0 +1,13 @@
+{
+  "functions": {
+    "pages/api/summarize.ts": {
+      "maxDuration": 300
+    },
+    "pages/api/extract.ts": {
+      "maxDuration": 60
+    }
+  },
+  "env": {
+    "OPENROUTER_API_KEY": "@openrouter-api-key"
+  }
+}

@@ -54,6 +54,13 @@ npm run dev
 
 ## Deployment on Vercel 🌐
 
+### Important Notes for Vercel
+
+⚠️ **Serverless Function Timeout**: 
+- **Hobby Plan**: 10-second timeout (may not work for large PDFs with 100+ questions)
+- **Pro Plan**: Up to 300 seconds (5 minutes) - recommended for production use
+- For Hobby plan, test with smaller documents (up to ~30 questions)
+
 ### Quick Deploy
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/yourusername/pdf-qutor)

@@ -9,6 +9,7 @@ export const config = {
   api: {
     bodyParser: false,
   },
+  maxDuration: 60, // 1 minute for file upload/extraction
 };
 
 interface ExtractedData {

@@ -1,5 +1,10 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 
+// Vercel serverless function configuration
+export const config = {
+  maxDuration: 300, // 5 minutes (requires Pro plan, default is 10s on Hobby)
+};
+
 interface Question {
   question: string;
   options: string[];
@@ -122,19 +127,22 @@ export default async function handler(
 CRITICAL RULES:
 1. Extract EVERY SINGLE question - do not skip any (even if there are 100+ questions)
 2. For each question, extract the exact question text
-3. Extract ALL options exactly as written (A, B, C, D or 1, 2, 3, 4)
-4. Find the correct answer that is marked in the document (look for "Answer:", "Correct:", "Ans:", asterisk *, or any marking)
-5. Clean up the option text - remove letters/numbers like "A)", "1.", etc. - keep only the actual option content
-6. If answer is marked as a letter (e.g., "Answer: B"), match it to the corresponding option
+3. Extract ALL options exactly as written
+4. Find the correct answer marked in the document
+5. Clean option text - remove prefixes like "A)", "1.", "a.", etc. - keep only content
+6. For correctAnswer field:
+   - If answer is a letter (A/B/C/D), put ONLY the letter (e.g., "A" not "Option A")
+   - If answer is a number (1/2/3/4), put ONLY the number as string (e.g., "1")
+   - If answer is the full option text, put the exact cleaned option text
 
-IMPORTANT: Return ONLY a valid JSON array with NO additional text, explanations, or markdown formatting.
+IMPORTANT: Return ONLY valid JSON array with NO markdown, explanations, or extra text.
 
-Expected format:
+Format:
 [
   {
-    "question": "exact question text",
-    "options": ["clean option 1", "clean option 2", "clean option 3", "clean option 4"],
-    "correctAnswer": "exact matching option text",
+    "question": "question text here",
+    "options": ["option 1 content", "option 2 content", "option 3 content", "option 4 content"],
+    "correctAnswer": "A",
     "answerMarkedInDocument": true
   }
 ]
@@ -212,50 +220,52 @@ ${text}`;
       
       if (extractedQuestions.length > 0) {
         // Process and verify answers
-        const processedQuestions = await Promise.all(
-          extractedQuestions.map(async (q: any, idx: number) => {
-            // Clean and find correct answer
-            let correctAnswer = q.correctAnswer;
-            let verified = q.answerMarkedInDocument === true;
-            
-            // Try to match the correct answer to one of the options
-            let correctIndex = q.options.findIndex((opt: string) => {
-              const cleanOpt = opt.toLowerCase().trim().replace(/[^\w\s]/g, '');
-              const cleanAnswer = correctAnswer.toLowerCase().trim().replace(/[^\w\s]/g, '');
-              return cleanOpt === cleanAnswer || 
-                     cleanOpt.includes(cleanAnswer) || 
-                     cleanAnswer.includes(cleanOpt);
-            });
-            
-            // If answer not found or not marked in document, verify with AI
-            if (correctIndex === -1 || !verified) {
-              console.log(`Verifying answer for question ${idx + 1}...`);
-              correctAnswer = await verifyAnswer(q.question, q.options, correctAnswer, openRouterKey);
-              correctIndex = q.options.findIndex((opt: string) => 
-                opt.toLowerCase().trim().replace(/[^\w\s]/g, '') === correctAnswer.toLowerCase().trim().replace(/[^\w\s]/g, '')
-              );
-              verified = true;
+        const processedQuestions = extractedQuestions.map((q: any, idx: number) => {
+          // Clean and find correct answer
+          let correctAnswer = q.correctAnswer;
+          let verified = q.answerMarkedInDocument === true;
+          
+          // Try to match the correct answer to one of the options
+          let correctIndex = q.options.findIndex((opt: string) => {
+            const cleanOpt = opt.toLowerCase().trim().replace(/[^\w\s]/g, '');
+            const cleanAnswer = correctAnswer.toLowerCase().trim().replace(/[^\w\s]/g, '');
+            return cleanOpt === cleanAnswer || 
+                   cleanOpt.includes(cleanAnswer) || 
+                   cleanAnswer.includes(cleanOpt);
+          });
+          
+          // If answer not found, try first letter matching (e.g., "B" -> second option)
+          if (correctIndex === -1 && correctAnswer.length <= 2) {
+            const answerLetter = correctAnswer.toUpperCase().trim();
+            if (answerLetter >= 'A' && answerLetter <= 'Z') {
+              const letterIndex = answerLetter.charCodeAt(0) - 65; // A=0, B=1, C=2, D=3
+              if (letterIndex >= 0 && letterIndex < q.options.length) {
+                correctIndex = letterIndex;
+                correctAnswer = q.options[correctIndex];
+                verified = true;
+              }
             }
-            
-            // If still not found, use first option as fallback
-            if (correctIndex === -1) {
-              correctIndex = 0;
-              correctAnswer = q.options[0];
-              verified = false;
-            }
-            
-            // Shuffle options
-            const { shuffled, newCorrectIndex } = shuffleOptions(q.options, correctIndex);
-            
-            return {
-              question: q.question,
-              options: shuffled,
-              correctAnswer: shuffled[newCorrectIndex],
-              originalIndex: idx,
-              verified
-            };
-          })
-        );
+          }
+          
+          // If still not found, use first option as fallback
+          if (correctIndex === -1) {
+            console.log(`Warning: Could not find answer for question ${idx + 1}, using first option`);
+            correctIndex = 0;
+            correctAnswer = q.options[0];
+            verified = false;
+          }
+          
+          // Shuffle options
+          const { shuffled, newCorrectIndex } = shuffleOptions(q.options, correctIndex);
+          
+          return {
+            question: q.question,
+            options: shuffled,
+            correctAnswer: shuffled[newCorrectIndex],
+            originalIndex: idx,
+            verified
+          };
+        });
         
         return res.status(200).json({ questions: processedQuestions });
       }
