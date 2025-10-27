@@ -24,7 +24,8 @@ const extractTextFromPDF = async (filePath: string): Promise<string> => {
 };
 
 const extractTextFromDOCX = async (filePath: string): Promise<string> => {
-  const result = await mammoth.extractRawText({ path: filePath });
+  const dataBuffer = await fs.readFile(filePath);
+  const result = await mammoth.extractRawText({ buffer: dataBuffer });
   return result.value;
 };
 
