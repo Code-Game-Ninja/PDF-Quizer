@@ -94,6 +94,172 @@ What is the correct answer? Respond with ONLY the exact option text, nothing els
   return proposedAnswer;
 }
 
+// Process large documents by splitting into chunks
+async function processLargeDocument(
+  text: string, 
+  apiKey: string, 
+  res: NextApiResponse<QuizResponse>
+): Promise<void> {
+  console.log('Processing large document in chunks...');
+  
+  // Split text into chunks (approximately 30 questions per chunk)
+  const chunkSize = 15000; // Characters per chunk
+  const chunks: string[] = [];
+  
+  for (let i = 0; i < text.length; i += chunkSize) {
+    chunks.push(text.slice(i, i + chunkSize));
+  }
+  
+  console.log(`Split into ${chunks.length} chunks`);
+  
+  const allQuestions: any[] = [];
+  
+  // Process each chunk sequentially
+  for (let i = 0; i < chunks.length; i++) {
+    console.log(`Processing chunk ${i + 1}/${chunks.length}...`);
+    
+    const prompt = `You are a quiz extraction expert. Extract ALL multiple-choice questions from this text chunk.
+
+MANDATORY REQUIREMENTS:
+1. Extract EVERY SINGLE QUESTION from this chunk
+2. For each question, extract the exact question text
+3. Extract ALL options exactly as written (usually 4 options: A, B, C, D)
+4. Find the correct answer marked in the document
+5. Clean option text - remove prefixes like "A)", "1.", "a.", "•" etc. - keep only the content
+6. For correctAnswer field:
+   - If answer is a letter (A/B/C/D), put ONLY the letter (e.g., "A")
+   - If answer is a number (1/2/3/4), put ONLY the number as string (e.g., "1")
+   - If answer is the full option text, put the exact cleaned option text
+
+RESPONSE FORMAT:
+- Return ONLY a valid JSON array
+- NO markdown code blocks (no \`\`\`json)
+- NO explanations or additional text
+
+Example format:
+[
+  {
+    "question": "What is 2+2?",
+    "options": ["1", "2", "3", "4"],
+    "correctAnswer": "D",
+    "answerMarkedInDocument": true
+  }
+]
+
+Text chunk ${i + 1}:
+${chunks[i]}`;
+
+    try {
+      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://pdf-qutor.vercel.app',
+          'X-Title': 'PDF Qutor'
+        },
+        body: JSON.stringify({
+          model: 'openai/gpt-4o-mini',
+          messages: [
+            {
+              role: 'system',
+              content: 'You are a JSON-only response bot. Extract ALL questions from the text chunk. Return valid JSON array only, no markdown blocks, no explanations.'
+            },
+            {
+              role: 'user',
+              content: prompt
+            }
+          ],
+          max_tokens: 16000,
+          temperature: 0.1,
+        }),
+      });
+
+      if (!response.ok) {
+        console.error(`Chunk ${i + 1} failed:`, response.status);
+        continue; // Skip this chunk and continue
+      }
+
+      const data = await response.json();
+      
+      if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+        console.error(`Invalid response for chunk ${i + 1}`);
+        continue;
+      }
+
+      let responseText = data.choices[0].message.content.trim();
+      responseText = responseText.replace(/```json\n?/g, '').replace(/```\n?/g, '');
+      
+      const jsonMatch = responseText.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        responseText = jsonMatch[0];
+      }
+      
+      const extractedQuestions = JSON.parse(responseText);
+      
+      if (Array.isArray(extractedQuestions)) {
+        allQuestions.push(...extractedQuestions);
+        console.log(`Chunk ${i + 1}: Extracted ${extractedQuestions.length} questions (Total: ${allQuestions.length})`);
+      }
+    } catch (error) {
+      console.error(`Error processing chunk ${i + 1}:`, error);
+      // Continue with next chunk
+    }
+  }
+  
+  console.log(`Total questions extracted from all chunks: ${allQuestions.length}`);
+  
+  if (allQuestions.length === 0) {
+    res.status(400).json({ error: 'No questions found in the document', questions: [] });
+    return;
+  }
+  
+  // Process and shuffle all questions
+  const processedQuestions = allQuestions.map((q: any, idx: number) => {
+    let correctAnswer = q.correctAnswer;
+    let verified = q.answerMarkedInDocument === true;
+    
+    let correctIndex = q.options.findIndex((opt: string) => {
+      const cleanOpt = opt.toLowerCase().trim().replace(/[^\w\s]/g, '');
+      const cleanAnswer = correctAnswer.toLowerCase().trim().replace(/[^\w\s]/g, '');
+      return cleanOpt === cleanAnswer || 
+             cleanOpt.includes(cleanAnswer) || 
+             cleanAnswer.includes(cleanOpt);
+    });
+    
+    if (correctIndex === -1 && correctAnswer.length <= 2) {
+      const answerLetter = correctAnswer.toUpperCase().trim();
+      if (answerLetter >= 'A' && answerLetter <= 'Z') {
+        const letterIndex = answerLetter.charCodeAt(0) - 65;
+        if (letterIndex >= 0 && letterIndex < q.options.length) {
+          correctIndex = letterIndex;
+          correctAnswer = q.options[correctIndex];
+          verified = true;
+        }
+      }
+    }
+    
+    if (correctIndex === -1) {
+      console.log(`Warning: Could not find answer for question ${idx + 1}, using first option`);
+      correctIndex = 0;
+      correctAnswer = q.options[0];
+      verified = false;
+    }
+    
+    const { shuffled, newCorrectIndex } = shuffleOptions(q.options, correctIndex);
+    
+    return {
+      question: q.question,
+      options: shuffled,
+      correctAnswer: shuffled[newCorrectIndex],
+      originalIndex: idx,
+      verified
+    };
+  });
+  
+  res.status(200).json({ questions: processedQuestions });
+}
+
 export default async function handler(
   req: NextApiRequest,
   res: NextApiResponse<QuizResponse>
@@ -123,6 +289,16 @@ export default async function handler(
     }
 
     console.log('API Key found, length:', openRouterKey.length);
+
+    // Check if we need to chunk the document for large PDFs
+    const estimatedQuestions = Math.floor(text.length / 400); // Rough estimate: 400 chars per question
+    console.log(`Estimated questions in document: ${estimatedQuestions}`);
+    
+    // If document is very large, process in chunks
+    if (text.length > 50000 || estimatedQuestions > 30) {
+      console.log('Large document detected, using chunking strategy...');
+      return await processLargeDocument(text, openRouterKey, res);
+    }
 
     try {
       const prompt = `You are a quiz extraction expert. I need you to extract ALL multiple-choice questions from this document. This is CRITICAL - do not stop at 10 or 15 questions.
