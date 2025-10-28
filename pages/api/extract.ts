@@ -1,6 +1,7 @@
 import { IncomingForm, File } from 'formidable';
 import { promises as fs } from 'fs';
 import path from 'path';
+import os from 'os';
 import { NextApiRequest, NextApiResponse } from 'next';
 import pdfParse from 'pdf-parse';
 import mammoth from 'mammoth';
@@ -36,9 +37,16 @@ const extractTextFromTXT = async (filePath: string): Promise<string> => {
 };
 
 const parseForm = (req: NextApiRequest): Promise<{ fields: any; files: any }> => {
-  return new Promise((resolve, reject) => {
-    // Use /tmp directory for Vercel serverless functions
-    const uploadDir = '/tmp';
+  return new Promise(async (resolve, reject) => {
+    // Use /tmp for Vercel, or OS temp directory for localhost
+    const uploadDir = process.env.VERCEL ? '/tmp' : os.tmpdir();
+    
+    // Ensure directory exists
+    try {
+      await fs.mkdir(uploadDir, { recursive: true });
+    } catch (err) {
+      // Directory might already exist, ignore error
+    }
 
     const form = new IncomingForm({
       uploadDir,
@@ -47,7 +55,10 @@ const parseForm = (req: NextApiRequest): Promise<{ fields: any; files: any }> =>
     });
 
     form.parse(req, (err, fields, files) => {
-      if (err) reject(err);
+      if (err) {
+        console.error('Form parse error:', err);
+        reject(err);
+      }
       resolve({ fields, files });
     });
   });
