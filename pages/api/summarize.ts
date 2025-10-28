@@ -125,33 +125,39 @@ export default async function handler(
     console.log('API Key found, length:', openRouterKey.length);
 
     try {
-      const prompt = `You are a quiz extraction expert. Extract ALL multiple-choice questions from this document.
+      const prompt = `You are a quiz extraction expert. I need you to extract ALL multiple-choice questions from this document. This is CRITICAL - do not stop at 10 or 15 questions.
 
-CRITICAL RULES:
-1. Extract EVERY SINGLE question - do not skip any (even if there are 100+ questions)
-2. For each question, extract the exact question text
-3. Extract ALL options exactly as written
-4. Find the correct answer marked in the document
-5. Clean option text - remove prefixes like "A)", "1.", "a.", etc. - keep only content
-6. For correctAnswer field:
-   - If answer is a letter (A/B/C/D), put ONLY the letter (e.g., "A" not "Option A")
+MANDATORY REQUIREMENTS:
+1. Extract EVERY SINGLE QUESTION - If document has 120 questions, extract all 120
+2. DO NOT LIMIT to 10, 15, or 20 questions - extract EVERYTHING
+3. For each question, extract the exact question text
+4. Extract ALL options exactly as written (usually 4 options: A, B, C, D)
+5. Find the correct answer marked in the document
+6. Clean option text - remove prefixes like "A)", "1.", "a.", "•" etc. - keep only the content
+7. For correctAnswer field:
+   - If answer is a letter (A/B/C/D), put ONLY the letter (e.g., "A")
    - If answer is a number (1/2/3/4), put ONLY the number as string (e.g., "1")
    - If answer is the full option text, put the exact cleaned option text
 
-IMPORTANT: Return ONLY valid JSON array with NO markdown, explanations, or extra text.
+RESPONSE FORMAT:
+- Return ONLY a valid JSON array
+- NO markdown code blocks (no \`\`\`json)
+- NO explanations or additional text
+- NO truncation - include ALL questions from the document
 
-Format:
+Example format:
 [
   {
-    "question": "question text here",
-    "options": ["option 1 content", "option 2 content", "option 3 content", "option 4 content"],
-    "correctAnswer": "A",
+    "question": "What is 2+2?",
+    "options": ["1", "2", "3", "4"],
+    "correctAnswer": "D",
     "answerMarkedInDocument": true
-  }
+  },
+  ... (continue for ALL questions in document)
 ]
 
-Document:
-${text}`; // Process entire document, no truncation
+Document text:
+${text}`;
 
       const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
@@ -166,14 +172,14 @@ ${text}`; // Process entire document, no truncation
           messages: [
             {
               role: 'system',
-              content: 'You are a JSON-only response bot. You must respond with valid JSON only, no explanations, no markdown code blocks, no additional text.'
+              content: 'You are a JSON-only response bot. Extract ALL questions from documents. Never limit to 10 or 15 questions. If there are 120 questions, extract all 120. Return valid JSON array only, no markdown blocks, no explanations.'
             },
             {
               role: 'user',
               content: prompt
             }
           ],
-          max_tokens: 16000, // Increased to handle 120+ questions
+          max_tokens: 32000, // Maximum for gpt-4o-mini to handle 120+ questions
           temperature: 0.1,
         }),
       });
