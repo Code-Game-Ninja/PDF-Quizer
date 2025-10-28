@@ -2,7 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 
 // Vercel serverless function configuration
 export const config = {
-  maxDuration: 60, // 60 seconds for Hobby plan (300s requires Pro plan)
+  maxDuration: 10, // 10 seconds for Hobby plan (free tier)
 };
 
 interface Question {
@@ -128,8 +128,8 @@ export default async function handler(
       const prompt = `You are a quiz extraction expert. Extract multiple-choice questions from this document.
 
 CRITICAL RULES:
-1. Extract UP TO 30 questions maximum (for performance)
-2. Prioritize the first 30 questions if document has more
+1. Extract UP TO 15 questions maximum (for fast processing)
+2. Prioritize the FIRST 15 questions only
 3. For each question, extract the exact question text
 4. Extract ALL options exactly as written
 5. Find the correct answer marked in the document
@@ -152,7 +152,7 @@ Format:
 ]
 
 Document:
-${text.slice(0, 30000)}`; // Limit text to 30k chars for faster processing
+${text.slice(0, 15000)}`; // Limit text to 15k chars for faster processing
 
       const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
@@ -174,7 +174,7 @@ ${text.slice(0, 30000)}`; // Limit text to 30k chars for faster processing
               content: prompt
             }
           ],
-          max_tokens: 8000, // Reduced for faster processing (30 questions)
+          max_tokens: 4000, // Reduced for faster processing (15 questions)
           temperature: 0.1,
         }),
       });

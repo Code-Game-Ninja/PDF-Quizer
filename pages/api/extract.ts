@@ -9,7 +9,7 @@ export const config = {
   api: {
     bodyParser: false,
   },
-  maxDuration: 30, // 30 seconds for file upload/extraction
+  maxDuration: 10, // 10 seconds for Hobby plan (free tier)
 };
 
 interface ExtractedData {
