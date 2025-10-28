@@ -2,7 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 
 // Vercel serverless function configuration
 export const config = {
-  maxDuration: 300, // 5 minutes (requires Pro plan, default is 10s on Hobby)
+  maxDuration: 60, // 60 seconds for Hobby plan (300s requires Pro plan)
 };
 
 interface Question {
@@ -115,22 +115,26 @@ export default async function handler(
     const openRouterKey = process.env.OPENROUTER_API_KEY;
     
     if (!openRouterKey) {
+      console.error('ERROR: OPENROUTER_API_KEY not found in environment variables');
       return res.status(500).json({ 
-        error: 'No API key configured', 
+        error: 'API key not configured. Please add OPENROUTER_API_KEY to your Vercel environment variables.', 
         questions: [] 
       });
     }
 
+    console.log('API Key found, length:', openRouterKey.length);
+
     try {
-      const prompt = `You are a quiz extraction expert. Extract ALL multiple-choice questions from this document.
+      const prompt = `You are a quiz extraction expert. Extract multiple-choice questions from this document.
 
 CRITICAL RULES:
-1. Extract EVERY SINGLE question - do not skip any (even if there are 100+ questions)
-2. For each question, extract the exact question text
-3. Extract ALL options exactly as written
-4. Find the correct answer marked in the document
-5. Clean option text - remove prefixes like "A)", "1.", "a.", etc. - keep only content
-6. For correctAnswer field:
+1. Extract UP TO 30 questions maximum (for performance)
+2. Prioritize the first 30 questions if document has more
+3. For each question, extract the exact question text
+4. Extract ALL options exactly as written
+5. Find the correct answer marked in the document
+6. Clean option text - remove prefixes like "A)", "1.", "a.", etc. - keep only content
+7. For correctAnswer field:
    - If answer is a letter (A/B/C/D), put ONLY the letter (e.g., "A" not "Option A")
    - If answer is a number (1/2/3/4), put ONLY the number as string (e.g., "1")
    - If answer is the full option text, put the exact cleaned option text
@@ -148,7 +152,7 @@ Format:
 ]
 
 Document:
-${text}`;
+${text.slice(0, 30000)}`; // Limit text to 30k chars for faster processing
 
       const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
@@ -170,16 +174,20 @@ ${text}`;
               content: prompt
             }
           ],
-          max_tokens: 16000, // Increased to handle 120+ questions
+          max_tokens: 8000, // Reduced for faster processing (30 questions)
           temperature: 0.1,
         }),
       });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        console.error('OpenRouter API error:', errorData);
+        console.error('OpenRouter API error:', {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorData
+        });
         return res.status(response.status).json({ 
-          error: `Failed to extract questions. Please try again.`,
+          error: `AI service error (${response.status}): ${errorData.error?.message || 'Please check your API key and try again'}`,
           questions: []
         });
       }

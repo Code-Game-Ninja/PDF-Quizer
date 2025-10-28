@@ -9,7 +9,7 @@ export const config = {
   api: {
     bodyParser: false,
   },
-  maxDuration: 60, // 1 minute for file upload/extraction
+  maxDuration: 30, // 30 seconds for file upload/extraction
 };
 
 interface ExtractedData {
@@ -37,10 +37,8 @@ const extractTextFromTXT = async (filePath: string): Promise<string> => {
 
 const parseForm = (req: NextApiRequest): Promise<{ fields: any; files: any }> => {
   return new Promise((resolve, reject) => {
-    const uploadDir = path.join(process.cwd(), 'public', 'uploads');
-    
-    // Create uploads directory if it doesn't exist
-    fs.mkdir(uploadDir, { recursive: true }).catch(console.error);
+    // Use /tmp directory for Vercel serverless functions
+    const uploadDir = '/tmp';
 
     const form = new IncomingForm({
       uploadDir,
@@ -63,17 +61,24 @@ export default async function handler(
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  console.log('Extract API called');
+
   try {
     const { files } = await parseForm(req);
+    console.log('Form parsed, files:', files ? 'found' : 'not found');
+    
     const file = Array.isArray(files.file) ? files.file[0] : files.file;
 
     if (!file) {
+      console.error('No file in request');
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
     const filePath = file.filepath;
     const fileName = file.originalFilename || 'unknown';
     const fileExt = path.extname(fileName).toLowerCase();
+
+    console.log(`Processing file: ${fileName} (${fileExt}), path: ${filePath}`);
 
     let extractedText = '';
 
