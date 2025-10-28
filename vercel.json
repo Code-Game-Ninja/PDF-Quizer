@@ -1,10 +1,10 @@
 {
   "functions": {
     "pages/api/summarize.ts": {
-      "maxDuration": 10
+      "maxDuration": 300
     },
     "pages/api/extract.ts": {
-      "maxDuration": 10
+      "maxDuration": 60
     }
   }
 }

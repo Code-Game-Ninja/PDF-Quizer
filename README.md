@@ -10,7 +10,7 @@ An intelligent quiz generation web application that extracts multiple-choice que
 - ✅ **Answer Verification**: AI verifies answers when not marked in the document
 - 📊 **Interactive Quiz Interface**: Take quizzes with instant feedback
 - 💾 **Download Results**: Export your quiz results as a text file
-- 🎯 **Fast Processing**: Optimized for up to 15 questions on free hosting
+- 🎯 **Production Ready**: Handles 120+ questions in a single request
 
 ## Tech Stack 🛠️
 
@@ -57,9 +57,11 @@ npm run dev
 ### Important Notes for Vercel
 
 ⚠️ **Serverless Function Timeout**: 
-- **Hobby Plan (Free)**: 10-second timeout - Works for up to **15 questions**
-- **Pro Plan ($20/month)**: Up to 300 seconds - Works for **100+ questions**
-- For best performance on free tier, use documents with 10-15 questions
+- **Hobby Plan (Free)**: 10-second timeout - NOT sufficient for large PDFs
+- **Pro Plan ($20/month)**: Up to 300 seconds - Required for 100+ questions
+- **This app is configured for Pro plan** (300-second timeout)
+
+**Note**: To use this app with 120 questions, you MUST upgrade to Vercel Pro plan.
 
 ### Quick Deploy
 
@@ -81,11 +83,11 @@ npm run dev
 ## Usage 📖
 
 1. **Upload Document**: Click "Upload PDF, DOCX, or TXT" and select your quiz file
-2. **Wait for Extraction**: The AI will extract up to 15 questions (limited by free hosting)
+2. **Wait for Extraction**: The AI will extract ALL questions (even 120+ questions!)
 3. **Take Quiz**: Answer questions with shuffled options
 4. **View Results**: See your score and download results
 
-**Note**: On Vercel free tier, the app extracts up to 15 questions. For more questions, upgrade to Vercel Pro or deploy on a platform without timeout limits.
+**Note**: Processing 120 questions takes about 30-60 seconds. For Vercel deployment, Pro plan is required.
 
 ## Environment Variables 🔐
 

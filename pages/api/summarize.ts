@@ -2,7 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 
 // Vercel serverless function configuration
 export const config = {
-  maxDuration: 10, // 10 seconds for Hobby plan (free tier)
+  maxDuration: 300, // 5 minutes - requires Vercel Pro plan
 };
 
 interface Question {
@@ -125,16 +125,15 @@ export default async function handler(
     console.log('API Key found, length:', openRouterKey.length);
 
     try {
-      const prompt = `You are a quiz extraction expert. Extract multiple-choice questions from this document.
+      const prompt = `You are a quiz extraction expert. Extract ALL multiple-choice questions from this document.
 
 CRITICAL RULES:
-1. Extract UP TO 15 questions maximum (for fast processing)
-2. Prioritize the FIRST 15 questions only
-3. For each question, extract the exact question text
-4. Extract ALL options exactly as written
-5. Find the correct answer marked in the document
-6. Clean option text - remove prefixes like "A)", "1.", "a.", etc. - keep only content
-7. For correctAnswer field:
+1. Extract EVERY SINGLE question - do not skip any (even if there are 100+ questions)
+2. For each question, extract the exact question text
+3. Extract ALL options exactly as written
+4. Find the correct answer marked in the document
+5. Clean option text - remove prefixes like "A)", "1.", "a.", etc. - keep only content
+6. For correctAnswer field:
    - If answer is a letter (A/B/C/D), put ONLY the letter (e.g., "A" not "Option A")
    - If answer is a number (1/2/3/4), put ONLY the number as string (e.g., "1")
    - If answer is the full option text, put the exact cleaned option text
@@ -152,7 +151,7 @@ Format:
 ]
 
 Document:
-${text.slice(0, 15000)}`; // Limit text to 15k chars for faster processing
+${text}`; // Process entire document, no truncation
 
       const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
@@ -174,7 +173,7 @@ ${text.slice(0, 15000)}`; // Limit text to 15k chars for faster processing
               content: prompt
             }
           ],
-          max_tokens: 4000, // Reduced for faster processing (15 questions)
+          max_tokens: 16000, // Increased to handle 120+ questions
           temperature: 0.1,
         }),
       });
