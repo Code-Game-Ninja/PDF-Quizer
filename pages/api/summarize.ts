@@ -102,8 +102,8 @@ async function processLargeDocument(
 ): Promise<void> {
   console.log('Processing large document in chunks...');
   
-  // Split text into chunks (approximately 30 questions per chunk)
-  const chunkSize = 15000; // Characters per chunk
+  // Split text into chunks (approximately 40-50 questions per chunk)
+  const chunkSize = 25000; // Increased to 25k characters per chunk
   const chunks: string[] = [];
   
   for (let i = 0; i < text.length; i += chunkSize) {
@@ -116,7 +116,8 @@ async function processLargeDocument(
   
   // Process each chunk sequentially
   for (let i = 0; i < chunks.length; i++) {
-    console.log(`Processing chunk ${i + 1}/${chunks.length}...`);
+    console.log(`\n=== Processing chunk ${i + 1}/${chunks.length} ===`);
+    console.log(`Chunk ${i + 1} size: ${chunks[i].length} characters`);
     
     const prompt = `You are a quiz extraction expert. Extract ALL multiple-choice questions from this text chunk.
 
@@ -182,13 +183,15 @@ ${chunks[i]}`;
               content: prompt
             }
           ],
-          max_tokens: 16000,
+          max_tokens: 20000, // Increased for more questions per chunk
           temperature: 0.1,
         }),
       });
 
       if (!response.ok) {
-        console.error(`Chunk ${i + 1} failed:`, response.status);
+        console.error(`✗ Chunk ${i + 1} API ERROR: ${response.status} ${response.statusText}`);
+        const errorData = await response.json().catch(() => ({}));
+        console.error(`  Error details:`, errorData);
         continue; // Skip this chunk and continue
       }
 
@@ -211,11 +214,14 @@ ${chunks[i]}`;
       
       if (Array.isArray(extractedQuestions)) {
         allQuestions.push(...extractedQuestions);
-        console.log(`Chunk ${i + 1}: Extracted ${extractedQuestions.length} questions (Total: ${allQuestions.length})`);
+        console.log(`✓ Chunk ${i + 1} SUCCESS: Extracted ${extractedQuestions.length} questions`);
+        console.log(`  Running total: ${allQuestions.length} questions`);
         // Log first question's answer for debugging
         if (extractedQuestions.length > 0) {
-          console.log(`Sample from chunk ${i + 1}: Q1 Answer="${extractedQuestions[0].correctAnswer}", Marked=${extractedQuestions[0].answerMarkedInDocument}`);
+          console.log(`  Sample Q: Answer="${extractedQuestions[0].correctAnswer}", Marked=${extractedQuestions[0].answerMarkedInDocument}`);
         }
+      } else {
+        console.error(`✗ Chunk ${i + 1} FAILED: Not an array`);
       }
     } catch (error) {
       console.error(`Error processing chunk ${i + 1}:`, error);
@@ -223,7 +229,10 @@ ${chunks[i]}`;
     }
   }
   
+  console.log(`\n=== EXTRACTION COMPLETE ===`);
   console.log(`Total questions extracted from all chunks: ${allQuestions.length}`);
+  console.log(`Chunks processed: ${chunks.length}`);
+  console.log(`Document size: ${text.length} characters`);
   
   if (allQuestions.length === 0) {
     res.status(400).json({ error: 'No questions found in the document', questions: [] });
@@ -314,12 +323,15 @@ export default async function handler(
     // Check if we need to chunk the document for large PDFs
     const estimatedQuestions = Math.floor(text.length / 400); // Rough estimate: 400 chars per question
     console.log(`Estimated questions in document: ${estimatedQuestions}`);
+    console.log(`Document length: ${text.length} characters`);
     
     // If document is very large, process in chunks
-    if (text.length > 50000 || estimatedQuestions > 30) {
+    if (text.length > 40000 || estimatedQuestions > 25) {
       console.log('Large document detected, using chunking strategy...');
       return await processLargeDocument(text, openRouterKey, res);
     }
+
+    console.log('Small document, processing in single request...');
 
     try {
       const prompt = `You are a quiz extraction expert. Extract ALL multiple-choice questions from this document.
