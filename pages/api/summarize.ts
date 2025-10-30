@@ -121,43 +121,62 @@ async function processLargeDocument(
     
     const prompt = `You are a quiz extraction expert. Extract ALL multiple-choice questions from this text chunk.
 
-CRITICAL INSTRUCTIONS FOR ANSWER EXTRACTION:
-1. Look for explicit answer indicators in the document:
-   - "Answer:", "Ans:", "Correct Answer:", "ANS:", "Correct:", "Right Answer:"
-   - Answers marked with asterisk (*), checkmark (✓), or highlighted
-   - "Correct option is", "The answer is"
-2. If answer is given as a letter (A/B/C/D), extract that EXACT letter
-3. If answer is given as option text, extract that EXACT text
-4. If answer is given as a number (1/2/3/4), convert to letter (1=A, 2=B, 3=C, 4=D)
-5. Pay attention to the answer format in the document - preserve it exactly
+CRITICAL INSTRUCTIONS FOR ANSWER EXTRACTION - READ CAREFULLY:
+1. Look for explicit answer indicators AFTER the options:
+   - "Answer:", "Ans:", "Ans.=", "Ans =", "Correct Answer:", "ANS:", "Correct:", "Right Answer:", "Solution:"
+   - Look for "Ans.= a", "Ans = b", "Answer: c", etc.
+   - Answers in parentheses like "(Answer: B)" or "(Ans: d)"
+   - Answer section at the end of questions
+2. EXTRACT THE EXACT ANSWER VALUE:
+   - If you see "Ans.= b" → extract "b" (lowercase)
+   - If you see "Answer: B" → extract "B" (uppercase)
+   - If you see "Ans: blood" → extract "blood"
+   - If you see "Correct Answer: 2" → extract "2"
+3. DO NOT GUESS - only extract if explicitly stated
+4. Pay attention to letter case - preserve it exactly
 
 QUESTION EXTRACTION RULES:
 1. Extract EVERY SINGLE QUESTION from this chunk
-2. Extract the exact question text (remove question numbers if present)
-3. Extract ALL options exactly as written (usually 4 options)
-4. Clean option text - remove ONLY prefixes like "A)", "B)", "1.", "2.", "a)", "b)", "•", "-"
-   - Keep the actual content intact
-5. DO NOT modify the option content itself
+2. Extract the exact question text (remove question numbers like "1)", "2)", "Q1:", etc.)
+3. Extract ALL options exactly as written (usually 4 options: a, b, c, d OR A, B, C, D OR 1, 2, 3, 4)
+4. Clean option text - remove ONLY prefixes like "a)", "A)", "1.", "a.", "b)", "B)", etc.
+   - Example: "a) blood" → "blood"
+   - Example: "A. environment" → "environment"
+   - Keep the actual option content intact
+5. DO NOT modify or interpret the option content
 
-ANSWER FORMAT IN RESPONSE:
-- If the document shows "Answer: B" → use "B"
-- If the document shows "Answer: The sun is hot" → use "The sun is hot"
-- If the document shows "Correct Answer: 2" → use "B" (convert 2 to B)
-- If the document shows "Ans: (c)" → use "C"
-- Mark answerMarkedInDocument as true ONLY if you found an explicit answer marking
+ANSWER EXTRACTION PROCESS:
+1. After extracting all options, look for the answer indicator
+2. If answer is a letter (a/b/c/d or A/B/C/D), note which letter it is
+3. If answer is a number (1/2/3/4), note which number
+4. If answer is the actual option text, note the exact text
+5. Match the answer to the correct option index (0=first, 1=second, 2=third, 3=fourth)
+
+RESPONSE FORMAT - YOU MUST USE "correctAnswerIndex" NOT "correctAnswer":
+- Use "correctAnswerIndex" (0, 1, 2, or 3) to indicate which option is correct
+- 0 = first option (a/A/1), 1 = second option (b/B/2), 2 = third option (c/C/3), 3 = fourth option (d/D/4)
+- Set answerMarkedInDocument to true ONLY if you found explicit answer marking
 
 RESPONSE FORMAT:
 Return ONLY a valid JSON array with NO markdown, NO explanations, NO code blocks.
+USE correctAnswerIndex (0-3) NOT correctAnswer!
 
 [
   {
     "question": "question text here",
     "options": ["option 1 content", "option 2 content", "option 3 content", "option 4 content"],
-    "correctAnswer": "B",
+    "correctAnswerIndex": 1,
     "answerMarkedInDocument": true,
-    "answerNote": "Found as 'Answer: B' in document"
+    "answerRaw": "b",
+    "answerNote": "Found as 'Ans.= b' in document"
   }
 ]
+
+Example conversions:
+- "Ans.= a" → correctAnswerIndex: 0
+- "Answer: B" → correctAnswerIndex: 1  
+- "Ans: c" → correctAnswerIndex: 2
+- "Correct Answer: 4" → correctAnswerIndex: 3
 
 Text chunk ${i + 1}:
 ${chunks[i]}`;
@@ -176,7 +195,7 @@ ${chunks[i]}`;
           messages: [
             {
               role: 'system',
-              content: 'You are a JSON-only response bot. CRITICAL: Extract the EXACT answer as marked in the document. If answer says "B", return "B". If answer says "2", convert to "B". Look carefully for answer indicators like "Answer:", "Ans:", "Correct Answer:". Return valid JSON array only, no markdown blocks, no explanations.'
+              content: 'You are a JSON-only response bot. CRITICAL: Return correctAnswerIndex (0-3) not correctAnswer. Extract the EXACT answer indicator from the document. If you see "Ans.= a" or "Ans: a", set correctAnswerIndex to 0. If "Ans.= b" or "Answer: B", set correctAnswerIndex to 1. If "Ans: c" or "Answer: C", set correctAnswerIndex to 2. If "Ans.= d" or "Answer: D", set correctAnswerIndex to 3. If answer is a number like "1", "2", "3", "4", subtract 1 to get the index. Look for answer indicators like "Answer:", "Ans:", "Ans.=", "Correct Answer:". Return valid JSON array only, no markdown blocks, no explanations.'
             },
             {
               role: 'user',
@@ -241,38 +260,64 @@ ${chunks[i]}`;
   
   // Process and shuffle all questions
   const processedQuestions = allQuestions.map((q: any, idx: number) => {
-    let correctAnswer = q.correctAnswer;
+    let correctIndex = -1;
     let verified = q.answerMarkedInDocument === true;
     
-    // Log original answer for debugging
-    if (idx < 3) {
-      console.log(`Q${idx + 1}: Original answer="${correctAnswer}", Options=[${q.options.join(', ')}]`);
-    }
-    
-    let correctIndex = q.options.findIndex((opt: string) => {
-      const cleanOpt = opt.toLowerCase().trim().replace(/[^\w\s]/g, '');
-      const cleanAnswer = correctAnswer.toLowerCase().trim().replace(/[^\w\s]/g, '');
-      return cleanOpt === cleanAnswer || 
-             cleanOpt.includes(cleanAnswer) || 
-             cleanAnswer.includes(cleanOpt);
-    });
-    
-    if (correctIndex === -1 && correctAnswer.length <= 2) {
-      const answerLetter = correctAnswer.toUpperCase().trim();
-      if (answerLetter >= 'A' && answerLetter <= 'Z') {
-        const letterIndex = answerLetter.charCodeAt(0) - 65;
-        if (letterIndex >= 0 && letterIndex < q.options.length) {
-          correctIndex = letterIndex;
-          correctAnswer = q.options[correctIndex];
-          verified = true;
+    // Prefer correctAnswerIndex if provided
+    if (typeof q.correctAnswerIndex === 'number' && q.correctAnswerIndex >= 0 && q.correctAnswerIndex < q.options.length) {
+      correctIndex = q.correctAnswerIndex;
+      console.log(`Q${idx + 1}: Using correctAnswerIndex=${correctIndex}, Answer="${q.options[correctIndex]}"`);
+    } 
+    // Fallback to old correctAnswer matching
+    else if (q.correctAnswer) {
+      let correctAnswer = q.correctAnswer;
+      
+      // Log original answer for debugging
+      if (idx < 3) {
+        console.log(`Q${idx + 1}: Trying to match correctAnswer="${correctAnswer}", Options=[${q.options.join(', ')}]`);
+      }
+      
+      correctIndex = q.options.findIndex((opt: string) => {
+        const cleanOpt = opt.toLowerCase().trim().replace(/[^\w\s]/g, '');
+        const cleanAnswer = correctAnswer.toLowerCase().trim().replace(/[^\w\s]/g, '');
+        return cleanOpt === cleanAnswer || 
+               cleanOpt.includes(cleanAnswer) || 
+               cleanAnswer.includes(cleanOpt);
+      });
+      
+      if (correctIndex === -1 && correctAnswer.length <= 2) {
+        const answerChar = correctAnswer.toLowerCase().trim();
+        // Try letter matching (a=0, b=1, c=2, d=3)
+        if (answerChar >= 'a' && answerChar <= 'z') {
+          const letterIndex = answerChar.charCodeAt(0) - 97;
+          if (letterIndex >= 0 && letterIndex < q.options.length) {
+            correctIndex = letterIndex;
+            verified = true;
+          }
+        }
+        // Try uppercase letter matching (A=0, B=1, C=2, D=3)
+        else if (answerChar.toUpperCase() >= 'A' && answerChar.toUpperCase() <= 'Z') {
+          const letterIndex = answerChar.toUpperCase().charCodeAt(0) - 65;
+          if (letterIndex >= 0 && letterIndex < q.options.length) {
+            correctIndex = letterIndex;
+            verified = true;
+          }
+        }
+        // Try number matching (1=0, 2=1, 3=2, 4=3)
+        else if (answerChar >= '1' && answerChar <= '4') {
+          const numberIndex = parseInt(answerChar) - 1;
+          if (numberIndex >= 0 && numberIndex < q.options.length) {
+            correctIndex = numberIndex;
+            verified = true;
+          }
         }
       }
     }
     
+    // Fallback if still not found
     if (correctIndex === -1) {
-      console.log(`Warning: Could not find answer for question ${idx + 1}, using first option`);
+      console.log(`⚠️ Warning: Could not determine answer for question ${idx + 1}, using first option`);
       correctIndex = 0;
-      correctAnswer = q.options[0];
       verified = false;
     }
     
@@ -336,44 +381,63 @@ export default async function handler(
     try {
       const prompt = `You are a quiz extraction expert. Extract ALL multiple-choice questions from this document.
 
-CRITICAL INSTRUCTIONS FOR ANSWER EXTRACTION:
-1. Look for explicit answer indicators in the document:
-   - "Answer:", "Ans:", "Correct Answer:", "ANS:", "Correct:", "Right Answer:"
-   - Answers marked with asterisk (*), checkmark (✓), or highlighted
-   - "Correct option is", "The answer is"
-2. If answer is given as a letter (A/B/C/D), extract that EXACT letter
-3. If answer is given as option text, extract that EXACT text  
-4. If answer is given as a number (1/2/3/4), convert to letter (1=A, 2=B, 3=C, 4=D)
-5. Pay attention to the answer format in the document - preserve it exactly
+CRITICAL INSTRUCTIONS FOR ANSWER EXTRACTION - READ CAREFULLY:
+1. Look for explicit answer indicators AFTER the options:
+   - "Answer:", "Ans:", "Ans.=", "Ans =", "Correct Answer:", "ANS:", "Correct:", "Right Answer:", "Solution:"
+   - Look for "Ans.= a", "Ans = b", "Answer: c", etc.
+   - Answers in parentheses like "(Answer: B)" or "(Ans: d)"
+   - Answer section at the end of questions
+2. EXTRACT THE EXACT ANSWER VALUE:
+   - If you see "Ans.= b" → extract "b" (lowercase)
+   - If you see "Answer: B" → extract "B" (uppercase)
+   - If you see "Ans: blood" → extract "blood"
+   - If you see "Correct Answer: 2" → extract "2"
+3. DO NOT GUESS - only extract if explicitly stated
+4. Pay attention to letter case - preserve it exactly
 
 QUESTION EXTRACTION RULES:
 1. Extract EVERY SINGLE QUESTION - do not stop at 10 or 15 questions
-2. Extract the exact question text (remove question numbers if present)
-3. Extract ALL options exactly as written (usually 4 options)
-4. Clean option text - remove ONLY prefixes like "A)", "B)", "1.", "2.", "a)", "b)", "•", "-"
-   - Keep the actual content intact
-5. DO NOT modify the option content itself
+2. Extract the exact question text (remove question numbers like "1)", "2)", "Q1:", etc.)
+3. Extract ALL options exactly as written (usually 4 options: a, b, c, d OR A, B, C, D OR 1, 2, 3, 4)
+4. Clean option text - remove ONLY prefixes like "a)", "A)", "1.", "a.", "b)", "B)", etc.
+   - Example: "a) blood" → "blood"
+   - Example: "A. environment" → "environment"
+   - Keep the actual option content intact
+5. DO NOT modify or interpret the option content
 
-ANSWER FORMAT IN RESPONSE:
-- If the document shows "Answer: B" → use "B"
-- If the document shows "Answer: The sun is hot" → use "The sun is hot"
-- If the document shows "Correct Answer: 2" → use "B" (convert 2 to B)
-- If the document shows "Ans: (c)" → use "C"
-- Mark answerMarkedInDocument as true ONLY if you found an explicit answer marking
+ANSWER EXTRACTION PROCESS:
+1. After extracting all options, look for the answer indicator
+2. If answer is a letter (a/b/c/d or A/B/C/D), note which letter it is
+3. If answer is a number (1/2/3/4), note which number
+4. If answer is the actual option text, note the exact text
+5. Match the answer to the correct option index (0=first, 1=second, 2=third, 3=fourth)
+
+RESPONSE FORMAT - YOU MUST USE "correctAnswerIndex" NOT "correctAnswer":
+- Use "correctAnswerIndex" (0, 1, 2, or 3) to indicate which option is correct
+- 0 = first option (a/A/1), 1 = second option (b/B/2), 2 = third option (c/C/3), 3 = fourth option (d/D/4)
+- Set answerMarkedInDocument to true ONLY if you found explicit answer marking
 
 RESPONSE FORMAT:
 Return ONLY a valid JSON array with NO markdown, NO explanations, NO code blocks.
+USE correctAnswerIndex (0-3) NOT correctAnswer!
 
 [
   {
     "question": "question text here",
     "options": ["option 1 content", "option 2 content", "option 3 content", "option 4 content"],
-    "correctAnswer": "B",
+    "correctAnswerIndex": 1,
     "answerMarkedInDocument": true,
-    "answerNote": "Found as 'Answer: B' in document"
+    "answerRaw": "b",
+    "answerNote": "Found as 'Ans.= b' in document"
   },
   ... (continue for ALL questions in document)
 ]
+
+Example conversions:
+- "Ans.= a" → correctAnswerIndex: 0
+- "Answer: B" → correctAnswerIndex: 1  
+- "Ans: c" → correctAnswerIndex: 2
+- "Correct Answer: 4" → correctAnswerIndex: 3
 
 Document text:
 ${text}`;
@@ -391,7 +455,7 @@ ${text}`;
           messages: [
             {
               role: 'system',
-              content: 'You are a JSON-only response bot. CRITICAL: Extract the EXACT answer as marked in the document. If answer says "B", return "B". If answer says "2", convert to "B". Look carefully for answer indicators like "Answer:", "Ans:", "Correct Answer:". Return valid JSON array only, no markdown blocks, no explanations.'
+              content: 'You are a JSON-only response bot. CRITICAL: Return correctAnswerIndex (0-3) not correctAnswer. Extract the EXACT answer indicator from the document. If you see "Ans.= a" or "Ans: a", set correctAnswerIndex to 0. If "Ans.= b" or "Answer: B", set correctAnswerIndex to 1. If "Ans: c" or "Answer: C", set correctAnswerIndex to 2. If "Ans.= d" or "Answer: D", set correctAnswerIndex to 3. If answer is a number like "1", "2", "3", "4", subtract 1 to get the index. Look for answer indicators like "Answer:", "Ans:", "Ans.=", "Correct Answer:". Return valid JSON array only, no markdown blocks, no explanations.'
             },
             {
               role: 'user',
@@ -453,46 +517,67 @@ ${text}`;
       if (extractedQuestions.length > 0) {
         // Process and verify answers
         const processedQuestions = extractedQuestions.map((q: any, idx: number) => {
-          // Clean and find correct answer
-          let correctAnswer = q.correctAnswer;
+          let correctIndex = -1;
           let verified = q.answerMarkedInDocument === true;
           
-          // Try to match the correct answer to one of the options
-          let correctIndex = q.options.findIndex((opt: string) => {
-            const cleanOpt = opt.toLowerCase().trim().replace(/[^\w\s]/g, '');
-            const cleanAnswer = correctAnswer.toLowerCase().trim().replace(/[^\w\s]/g, '');
-            return cleanOpt === cleanAnswer || 
-                   cleanOpt.includes(cleanAnswer) || 
-                   cleanAnswer.includes(cleanOpt);
-          });
+          // Prefer correctAnswerIndex if provided
+          if (typeof q.correctAnswerIndex === 'number' && q.correctAnswerIndex >= 0 && q.correctAnswerIndex < q.options.length) {
+            correctIndex = q.correctAnswerIndex;
+            console.log(`Q${idx + 1}: Using correctAnswerIndex=${correctIndex}, Answer="${q.options[correctIndex]}"`);
+          } 
+          // Fallback to old correctAnswer matching
+          else if (q.correctAnswer) {
+            let correctAnswer = q.correctAnswer;
+            
+            // Log original answer for debugging
+            if (idx < 3) {
+              console.log(`Q${idx + 1}: Trying to match correctAnswer="${correctAnswer}", Options=[${q.options.join(', ')}]`);
+            }
+            
+            correctIndex = q.options.findIndex((opt: string) => {
+              const cleanOpt = opt.toLowerCase().trim().replace(/[^\w\s]/g, '');
+              const cleanAnswer = correctAnswer.toLowerCase().trim().replace(/[^\w\s]/g, '');
+              return cleanOpt === cleanAnswer || 
+                     cleanOpt.includes(cleanAnswer) || 
+                     cleanAnswer.includes(cleanOpt);
+            });
+            
+            if (correctIndex === -1 && correctAnswer.length <= 2) {
+              const answerChar = correctAnswer.toLowerCase().trim();
+              // Try letter matching (a=0, b=1, c=2, d=3)
+              if (answerChar >= 'a' && answerChar <= 'z') {
+                const letterIndex = answerChar.charCodeAt(0) - 97;
+                if (letterIndex >= 0 && letterIndex < q.options.length) {
+                  correctIndex = letterIndex;
+                  verified = true;
+                  if (idx < 3) console.log(`Q${idx + 1}: Matched by letter "${answerChar}" -> index ${correctIndex}`);
+                }
+              }
+              // Try uppercase letter matching (A=0, B=1, C=2, D=3)
+              else if (answerChar.toUpperCase() >= 'A' && answerChar.toUpperCase() <= 'Z') {
+                const letterIndex = answerChar.toUpperCase().charCodeAt(0) - 65;
+                if (letterIndex >= 0 && letterIndex < q.options.length) {
+                  correctIndex = letterIndex;
+                  verified = true;
+                  if (idx < 3) console.log(`Q${idx + 1}: Matched by UPPERCASE letter "${answerChar}" -> index ${correctIndex}`);
+                }
+              }
+              // Try number matching (1=0, 2=1, 3=2, 4=3)
+              else if (answerChar >= '1' && answerChar <= '4') {
+                const numberIndex = parseInt(answerChar) - 1;
+                if (numberIndex >= 0 && numberIndex < q.options.length) {
+                  correctIndex = numberIndex;
+                  verified = true;
+                  if (idx < 3) console.log(`Q${idx + 1}: Matched by number "${answerChar}" -> index ${correctIndex}`);
+                }
+              }
+            }
+          }
           
-    // If answer not found, try first letter matching (e.g., "B" -> second option)
-    if (correctIndex === -1 && correctAnswer.length <= 2) {
-      const answerLetter = correctAnswer.toUpperCase().trim();
-      if (answerLetter >= 'A' && answerLetter <= 'Z') {
-        const letterIndex = answerLetter.charCodeAt(0) - 65; // A=0, B=1, C=2, D=3
-        if (letterIndex >= 0 && letterIndex < q.options.length) {
-          correctIndex = letterIndex;
-          correctAnswer = q.options[correctIndex];
-          verified = true;
-          if (idx < 3) console.log(`Q${idx + 1}: Matched by letter "${answerLetter}" -> index ${correctIndex}`);
-        }
-      }
-      // Try number matching (1=A, 2=B, 3=C, 4=D)
-      else if (answerLetter >= '1' && answerLetter <= '4') {
-        const numberIndex = parseInt(answerLetter) - 1; // 1=0, 2=1, 3=2, 4=3
-        if (numberIndex >= 0 && numberIndex < q.options.length) {
-          correctIndex = numberIndex;
-          correctAnswer = q.options[correctIndex];
-          verified = true;
-          if (idx < 3) console.log(`Q${idx + 1}: Matched by number "${answerLetter}" -> index ${correctIndex}`);
-        }
-      }
-    }          // If still not found, use first option as fallback
+          // Fallback if still not found
           if (correctIndex === -1) {
-            console.log(`Warning: Could not find answer for question ${idx + 1}, using first option`);
+            console.log(`⚠️ Warning: Could not determine answer for question ${idx + 1}, using first option`);
             correctIndex = 0;
-            correctAnswer = q.options[0];
             verified = false;
           }
           
